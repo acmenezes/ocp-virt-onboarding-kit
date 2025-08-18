@@ -66,56 +66,6 @@ This section provides configurations for cloud environments where direct physica
 - Consider larger MTU sizes to reduce packet overhead
 - Monitor CPU usage on network-intensive workloads
 
-## Deployment Examples
-
-### For AWS/EKS Environment
-```bash
-# Layer2 overlay for VM clustering
-oc apply -f ovn-k8s-overlay-nad-dhcp-cloud.yaml
-
-# Static IP allocation
-oc apply -f ovn-k8s-overlay-nad-static-cloud.yaml
-```
-
-### For Azure/AKS Environment
-```bash
-# Layer3 overlay for distributed apps
-oc apply -f ovn-k8s-overlay-nad-layer3-cloud.yaml
-```
-
-### For GCP/GKE Environment
-```bash
-# Both layer2 and layer3 work well
-oc apply -f ovn-k8s-overlay-nad-static-cloud.yaml
-oc apply -f ovn-k8s-overlay-nad-layer3-cloud.yaml
-```
-
-## Verification Commands
-
-### Check Geneve Tunnels
-```bash
-# Verify Geneve interfaces exist
-oc debug node/<node-name>
-chroot /host
-ip link show type geneve
-
-# Check OVN southbound database
-ovn-sbctl show
-
-# Monitor Geneve traffic
-tcpdump -i any -n 'port 6081'
-```
-
-### Validate Network Connectivity
-```bash
-# Test connectivity between VMs on overlay network
-oc rsh <vm-pod-name>
-ping <target-vm-ip>
-
-# Check OVN logical topology
-ovn-nbctl show
-```
-
 ## Security Considerations
 
 ### Cloud Security Groups
@@ -148,23 +98,23 @@ spec:
 ### Common Cloud Issues
 
 1. **Geneve Traffic Blocked**
-   ```bash
-   # Check cloud security groups allow UDP 6081
-   # Verify no firewall rules blocking Geneve
-   ```
+  
+- Check cloud security groups allow UDP 6081
+- Verify no firewall rules blocking Geneve
+
 
 2. **MTU Issues**
-   ```bash
-   # Check if cloud network supports larger MTU
-   # Adjust MTU in overlay configuration if needed
-   ```
+
+- Check if cloud network supports larger MTU
+- Adjust MTU in overlay configuration if needed
+
 
 3. **Performance Problems**
-   ```bash
-   # Monitor CPU usage during network operations
-   # Consider hardware acceleration options
-   # Check for packet drops in cloud networking
-   ```
+
+- Monitor CPU usage during network operations
+- Consider hardware acceleration options
+- Check for packet drops in cloud networking
+
 
 ## When to Use Each Approach
 
@@ -173,19 +123,11 @@ spec:
 - Bare metal servers
 - Direct hardware access required
 - Maximum performance needed
+- Total control over vlans and subnets
+- No SDN
 
 ### Use Overlay (Geneve) When:
 - Cloud environments (AWS, Azure, GCP)
 - Network isolation required
 - Multi-tenant scenarios
 - Cloud provider restrictions apply
-
-## Migration Path
-
-If moving from localnet to overlay:
-
-1. **Test Performance**: Benchmark your workload with overlay networking
-2. **Update Security**: Configure cloud security groups for Geneve
-3. **Monitor Resources**: Watch CPU usage for encapsulation overhead
-4. **Adjust MTU**: Optimize MTU sizes for your cloud environment
-5. **Validate Connectivity**: Ensure all required ports are accessible 

@@ -13,4 +13,4 @@ spec:
       "topology": "localnet",
       "netAttachDefName": "openshift-multus/physnet1"
     }'
-    type: Raw 
+    type: Raw
