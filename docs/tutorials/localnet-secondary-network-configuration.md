@@ -1,6 +1,12 @@
-# Configuring Localnet Secondary Networks with Network Attachment Definitions in OpenShift Virtualization
+# Configuring Localnet Secondary Networks with ClusterUserDefinedNetwork in OpenShift Virtualization
 
-This tutorial shows you how to create a localnet secondary network using Network Attachment Definitions (NADs) in OpenShift Virtualization. Localnet topology provides direct access to the underlying physical network infrastructure, enabling virtual machines to communicate directly with external networks and services while maintaining their primary pod network connectivity. This approach is ideal when you need VMs to have direct access to existing network infrastructure or when integrating with legacy systems that require layer 2 connectivity. The entire setup takes just 3 straightforward steps and provides seamless integration with your existing network infrastructure.
+This tutorial demonstrates how to configure localnet secondary networks using ClusterUserDefinedNetwork (CUDN) in OpenShift Virtualization. Localnet topology provides direct access to physical network infrastructure, enabling VMs to communicate with external networks while maintaining pod network connectivity. This approach is ideal for integrating with existing infrastructure or legacy systems requiring layer 2 connectivity.
+
+## Prerequisites
+
+- **NMState Operator**: Must be installed and running in the cluster
+- **NMState CR**: The nmstate instance must be created after the operator is running
+- **Worker nodes**: The bridge mapping will be applied to worker nodes
 
 Versions tested:
 ```
@@ -9,7 +15,7 @@ OCP 4.19
 
 ## Step 1: Create VM Namespace
 
-Create a dedicated namespace for hosting virtual machines that will use the localnet secondary network configuration. This namespace will contain all the VM workloads and network resources needed for localnet connectivity.
+Create a namespace for VMs that will use the localnet secondary network.
 
 ```bash
 oc apply -f - <<EOF
@@ -20,32 +26,59 @@ metadata:
 EOF
 ```
 
-## Step 2: Create Network Attachment Definition with Localnet Topology
+## Step 2: Configure Bridge Mapping
 
-Define the localnet NetworkAttachmentDefinition that provides secondary network connectivity to VMs. This configuration creates a localnet topology that enables direct access to external physical networks while maintaining isolation from other networks.
+Configure the bridge mapping that connects the logical physnet name to the `br-ex` bridge interface. This tells OVN-Kubernetes which physical interface handles localnet traffic.
 
 ```bash
 oc apply -f - <<EOF
-apiVersion: k8s.cni.cncf.io/v1
-kind: NetworkAttachmentDefinition
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
 metadata:
-  name: localnet-secondary
-  namespace: vm-guests-localnet
+  name: localnet-bridge-mapping
 spec:
-  config: |
-    {
-      "cniVersion": "0.3.1",
-      "name": "localnet-secondary",
-      "type": "ovn-k8s-cni-overlay",
-      "topology": "localnet",
-      "netAttachDefName": "vm-guests-localnet/localnet-secondary"
-    }
+  nodeSelector:
+    node-role.kubernetes.io/worker: ''  
+  desiredState:
+    ovn:
+      bridge-mappings:
+      - localnet: localnet1
+        bridge: br-ex
+        state: present
 EOF
 ```
 
-## Step 3: Deploy VM with Localnet Secondary Network
+**Note**: This maps the logical `localnet1` name to the `br-ex` bridge on worker nodes, enabling VM access to external networks.
 
-Create a virtual machine that connects to both the default pod network and the localnet secondary network. The VM will have dual connectivity - pod network for Kubernetes services and localnet for direct external network access.
+## Step 3: Create ClusterUserDefinedNetwork
+
+Create a ClusterUserDefinedNetwork with localnet topology for secondary network connectivity to external networks.
+
+```bash
+oc apply -f - <<EOF
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: cudn-localnet
+spec:
+  namespaceSelector: 
+    matchExpressions: 
+    - key: kubernetes.io/metadata.name
+      operator: In 
+      values: ["vm-guests-localnet"]
+  network:
+    topology: Localnet 
+    localnet:
+        role: Secondary 
+        physicalNetworkName: localnet1 
+        ipam:
+          mode: Disabled
+EOF
+```
+
+## Step 4: Deploy VM with Dual Network Connectivity
+
+Create a VM that connects to both the pod network and the localnet secondary network for dual connectivity.
 
 ```bash
 oc apply -f - <<EOF
@@ -57,7 +90,7 @@ metadata:
   labels:
     app: fedora-localnet-vm
 spec:
-  running: true
+  runStrategy: Always
   dataVolumeTemplates:
   - metadata:
       name: fedora-localnet-volume
@@ -76,8 +109,6 @@ spec:
     metadata:
       labels:
         app: fedora-localnet-vm
-      annotations:
-        k8s.v1.cni.cncf.io/networks: vm-guests-localnet/localnet-secondary
     spec:
       domain:
         devices:
@@ -91,7 +122,7 @@ spec:
           interfaces:
           - name: default
             bridge: {}
-          - name: localnet
+          - name: secondary_localnet
             bridge: {}
         resources:
           requests:
@@ -100,9 +131,9 @@ spec:
       networks:
       - name: default
         pod: {}
-      - name: localnet
+      - name: secondary_localnet
         multus:
-          networkName: localnet-secondary
+          networkName: cudn-localnet
       volumes:
       - name: datavolumedisk
         dataVolume:
@@ -122,9 +153,9 @@ spec:
 EOF
 ```
 
-## Step 4: Verify Localnet Secondary Network Connectivity
+## Step 5: Verify Network Connectivity
 
-Test the localnet configuration by accessing the VM console and verifying dual network connectivity. The VM should have access to both the pod network for Kubernetes services and the localnet for direct external network access.
+Access the VM console to verify dual network connectivity.
 
 ```bash
 # Check the VM status
@@ -133,54 +164,36 @@ oc get vm -n vm-guests-localnet
 # Check the running VM instance
 oc get vmi -n vm-guests-localnet
 
-# Access the VM console
+# Access the VM console (credentials: fedora/fedora via cloud-init)
 virtctl console -n vm-guests-localnet fedora-localnet-vm
 ```
 
 Inside the VM console, verify the network configuration:
 
 ```bash
-# Check network interfaces and IP addresses
+# Check network interfaces - primary (pod network) and secondary (localnet)
 ip addr show
 
-# Check routes - should show external gateway
+# Check routes - two default gateways (lower metric prioritized)
+# Primary network: metric 100, Secondary: metric 101
 ip route show
+
+# Expected output example:
+
+default via 10.128.0.1 dev enp1s0 proto dhcp src 10.128.0.172 metric 100 
+default via 192.168.2.1 dev enp2s0 proto dhcp src 192.168.2.128 metric 101 
 
 # Test external connectivity
 ping 8.8.8.8
 
-# Test DNS resolution
-nslookup google.com
-
 # Verify the web service is running
 curl localhost:8080
 
-# Check connectivity on both interfaces
-# eth0 should be the pod network interface
-# eth1 should be the localnet interface
-
-# Verify pod network connectivity (Kubernetes services)
-curl kubernetes.default.svc.cluster.local
-
-# Test localnet interface connectivity to external networks
-# Replace <localnet-ip> with the actual IP assigned to eth1
+# Test localnet interface connectivity (replace <localnet-ip> with actual IP)
 curl <localnet-ip>:8080
 ```
-
-To test external access to the VM's web service, you can access it using:
-- The pod network through Kubernetes Services (internal cluster access)
-- The localnet interface IP directly from external networks on the same physical segment
-
 ## References
 
 ### OpenShift Documentation
 - [OpenShift - Understanding Multiple Networks](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/understanding-multiple-networks)
-- [Configuring Additional Networks](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/configuring-additional-network-types)
-- [Creating Secondary Networks on OVN-Kubernetes](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/secondary_networks/creating-secondary-nwt-ovnk)
-- [Network Attachment Definitions](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/secondary_networks/about-network-attachment-definitions)
-- [Localnet Topology Configuration](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/secondary_networks/configuring-localnet-topology)
-- [OpenShift Virtualization Networking](https://docs.redhat.com/en/documentation/openshift_virtualization/4.19/html/networking/index)
-
-### Kubernetes APIs
-- [NetworkAttachmentDefinition API](https://github.com/k8snetworkplumbingwg/network-attachment-definition-client)
-- [KubeVirt VirtualMachine API](https://kubevirt.io/api-reference/main/definitions.html#_v1_virtualmachine)
+- [Localnet Topology Configuration for OCP Virtualization](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/virtualization/networking#virt-creating-secondary-localnet-udn_virt-connecting-vm-to-secondary-udn)
