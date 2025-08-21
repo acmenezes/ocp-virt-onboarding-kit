@@ -1,6 +1,6 @@
-# Configuring Localnet Secondary Networks with User Defined Networks in OpenShift Virtualization
+# Configuring Localnet Secondary Networks with Network Attachment Definitions in OpenShift Virtualization
 
-This tutorial shows you how to create a localnet secondary network using UserDefinedNetwork resources in OpenShift Virtualization. Localnet topology provides direct access to the underlying physical network infrastructure without VLANs, enabling virtual machines to communicate directly with external networks and services while maintaining their primary pod network connectivity. This approach is ideal when you need VMs to have direct access to existing network infrastructure or when integrating with legacy systems that require layer 2 connectivity. The entire setup takes just 4 straightforward steps and provides seamless integration with your existing network infrastructure.
+This tutorial shows you how to create a localnet secondary network using Network Attachment Definitions (NADs) in OpenShift Virtualization. Localnet topology provides direct access to the underlying physical network infrastructure, enabling virtual machines to communicate directly with external networks and services while maintaining their primary pod network connectivity. This approach is ideal when you need VMs to have direct access to existing network infrastructure or when integrating with legacy systems that require layer 2 connectivity. The entire setup takes just 3 straightforward steps and provides seamless integration with your existing network infrastructure.
 
 Versions tested:
 ```
@@ -20,24 +20,26 @@ metadata:
 EOF
 ```
 
-## Step 2: Create UserDefinedNetwork with Localnet Topology
+## Step 2: Create Network Attachment Definition with Localnet Topology
 
-Define the localnet UserDefinedNetwork that provides secondary network connectivity to VMs. This configuration creates a localnet topology that enables direct access to external physical networks while maintaining isolation from other networks.
+Define the localnet NetworkAttachmentDefinition that provides secondary network connectivity to VMs. This configuration creates a localnet topology that enables direct access to external physical networks while maintaining isolation from other networks.
 
 ```bash
 oc apply -f - <<EOF
-apiVersion: k8s.ovn.org/v1
-kind: UserDefinedNetwork
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
 metadata:
   name: localnet-secondary
   namespace: vm-guests-localnet
 spec:
-  topology: Localnet
-  localnet:
-    role: Secondary
-  namespaceSelector:
-    matchLabels:
-      name: vm-guests-localnet
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "localnet-secondary",
+      "type": "ovn-k8s-cni-overlay",
+      "topology": "localnet",
+      "netAttachDefName": "vm-guests-localnet/localnet-secondary"
+    }
 EOF
 ```
 
@@ -100,7 +102,7 @@ spec:
         pod: {}
       - name: localnet
         multus:
-          networkName: vm-guests-localnet/localnet-secondary
+          networkName: localnet-secondary
       volumes:
       - name: datavolumedisk
         dataVolume:
@@ -174,8 +176,9 @@ To test external access to the VM's web service, you can access it using:
 ### OpenShift Documentation
 - [OpenShift - Understanding Multiple Networks](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/understanding-multiple-networks)
 - [Configuring Additional Networks](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/configuring-additional-network-types)
-- [UserDefinedNetwork CR](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/primary_networks/about-user-defined-networks)
 - [Creating Secondary Networks on OVN-Kubernetes](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/secondary_networks/creating-secondary-nwt-ovnk)
+- [Network Attachment Definitions](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/secondary_networks/about-network-attachment-definitions)
+- [Localnet Topology Configuration](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/secondary_networks/configuring-localnet-topology)
 - [OpenShift Virtualization Networking](https://docs.redhat.com/en/documentation/openshift_virtualization/4.19/html/networking/index)
 
 ### Kubernetes APIs
