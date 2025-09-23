@@ -15,7 +15,7 @@ A bite-size approach reference project for deploying virtualization workloads fo
 #### Setting up the basics:
 
 - Setting UP Local Environment and Tools for OCP virtualization
-- Virtctl basics
+- [Virtctl basics](docs/tutorials/virtctl-basic-overview.md)
 
 #### Working with files, images and templates
 
