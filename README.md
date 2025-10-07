@@ -41,7 +41,7 @@ A bite-size approach reference project for deploying virtualization workloads fo
 - Creating Storage Profiles for OCP virtualization
 - Using local storage with HostPath provisioner
 - Creating Storage Classes
-- Using local Storage with LVM operator
+- [Using local Storage with LVM operator](docs/tutorials/lvm-operator-local-disk-installation.md)
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
