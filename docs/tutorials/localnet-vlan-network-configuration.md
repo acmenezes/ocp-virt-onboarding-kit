@@ -6,6 +6,7 @@ This tutorial demonstrates how to configure localnet secondary networks with VLA
 
 - **NMState Operator**: Must be installed and running in the cluster
 - **NMState CR**: The nmstate instance must be created after the operator is running
+- **Worker nodes**: The bridge mapping will be applied to worker nodes
 - **VLAN Infrastructure**: Physical network infrastructure must support VLAN tagging
 - **Switch Configuration**: Physical switch ports connected to OpenShift worker nodes must be configured in **trunk mode** to handle multiple VLAN-tagged traffic streams
 
@@ -24,8 +25,6 @@ The physical switch ports connected to OpenShift worker nodes **must be configur
 - **VLAN tagging**: Each VLAN is identified by its unique VLAN ID (e.g., 100, 200, 300)
 - **Multiple networks**: Essential for supporting multiple VLAN-based secondary networks
 
-![SNO diagram](./img/ocp-setup-diagrams-OCP%20virt%202nd%20Net.png)
-
 ## Step 1: Create VM Namespace
 
 Create a namespace for VMs that will use the localnet secondary network with VLAN configuration.
@@ -39,119 +38,10 @@ metadata:
 EOF
 ```
 
-## Step 2: Configure Bridge on Extra NIC (Optional)
+## Step 2: Configure Bridge Mapping
 
-This step shows how to create an OVS bridge on a dedicated physical NIC for localnet traffic. Skip to **Option B** if you want to use the default `br-ex` bridge instead.
+Configure the bridge mapping that connects the logical network interface name `localnet-vlan` to the `br-ex` bridge interface on worker nodes. This mapping tells OVN-Kubernetes which physical bridge interface handles localnet traffic with VLAN support, enabling VM access to VLAN-tagged external networks through the underlying physical network infrastructure.
 
-### Option A: Create Custom OVS Bridge on Extra NIC
-
-If you have an extra physical network interface (e.g., `ens224`, `eth1`, `enp11s0f0np0`) dedicated for VM networks, create an OVS bridge on that interface.
-
-**First, identify your physical interface:**
-```bash
-# List available network interfaces on worker nodes
-oc debug node/<worker-node-name> -- chroot /host ip link show
-```
-
-**Create the OVS bridge and attach the physical interface:**
-```bash
-oc apply -f - <<EOF
-apiVersion: nmstate.io/v1
-kind: NodeNetworkConfigurationPolicy
-metadata:
-  name: br-vlan-creation
-spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ''
-  desiredState:
-    interfaces:
-      - name: enp11s0f0np0
-        description: Physical interface for VLAN localnet
-        type: ethernet
-        state: up
-        ipv4:
-          enabled: false
-        ipv6:
-          enabled: false
-      - name: br-vlan
-        description: OVS bridge for VLAN traffic
-        type: ovs-bridge
-        state: up
-        bridge:
-          port:
-            - name: enp11s0f0np0
-EOF
-```
-
-**Configuration Details**:
-- `enp11s0f0np0`: Replace with your actual physical interface name
-- `br-vlan`: Custom bridge name (you can use any name)
-- `ipv4/ipv6: enabled: false`: Physical interface doesn't need IP addressing
-- The physical interface is added as a port to the OVS bridge
-
-**Verify the bridge creation:**
-
-> **Important**: OVS bridges won't show up in `ip addr show` or `ip link show` commands. This is normal! OVS bridges exist in the OVS database, not as regular Linux network devices. Use `ovs-vsctl` commands to verify them.
-
-```bash
-# Check the NodeNetworkConfigurationPolicy status
-oc get nncp br-vlan-creation
-
-# List all OVS bridges (THIS IS THE CORRECT WAY)
-oc debug node/<worker-node-name> -- chroot /host ovs-vsctl list-br
-
-# Verify detailed OVS configuration
-oc debug node/<worker-node-name> -- chroot /host ovs-vsctl show
-```
-
-**Expected output from `ovs-vsctl list-br`:**
-```
-br-ex
-br-int
-br-vlan
-```
-
-**Expected output from `ovs-vsctl show` (relevant section):**
-```
-Bridge br-vlan
-    Port enp11s0f0np0
-        Interface enp11s0f0np0
-            type: system
-```
-
-If you encounter any issues verifying the bridge, see the **[OVS Bridge Verification Troubleshooting Guide](../troubleshooting/ovs-bridge-verification.md)** for detailed troubleshooting steps with example outputs.
-
-**Configure Bridge Mapping**
-
-**For custom bridge (br-vlan):**
-```bash
-oc apply -f - <<EOF
-apiVersion: nmstate.io/v1
-kind: NodeNetworkConfigurationPolicy
-metadata:
-  name: localnet-vlan-bridge-mapping
-spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ''  
-  desiredState:
-    ovn:
-      bridge-mappings:
-      - localnet: localnet-vlan
-        bridge: br-vlan
-        state: present
-EOF
-```
-
-**Configuration Details**:
-- `localnet: localnet-vlan`: Logical network interface name (referenced later in NAD)
-- `bridge: br-vlan` : Physical bridge name
-- This creates the mapping: `localnet-vlan` → `br-vlan`
-
-### Option B: Use Default br-ex Bridge
-
-If you want to use the existing `br-ex` bridge (default OpenShift network) configure the bridge mapping that connects the logical network interface name `localnet-vlan` to your OVS bridge like below. This mapping tells OVN-Kubernetes which physical bridge interface handles localnet traffic with VLAN support. In this case the default br-ex.
-
-**For default bridge (br-ex):**
 ```bash
 oc apply -f - <<EOF
 apiVersion: nmstate.io/v1
@@ -168,20 +58,6 @@ spec:
         bridge: br-ex
         state: present
 EOF
-```
-
-**Configuration Details**:
-- `localnet: localnet-vlan`: Logical network interface name (referenced later in NAD)
-- `bridge: `bridge: br-ex`: Physical bridge name
-- This creates the mapping: `localnet-vlan` → `br-ex`
-
-**Verify the bridge mapping:**
-```bash
-# Check the mapping configuration
-oc get nncp localnet-vlan-bridge-mapping -o yaml
-
-# Verify OVN bridge mappings on worker nodes
-oc debug node/<worker-node-name> -- chroot /host ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
 ```
 
 ## Step 3: Create NetworkAttachmentDefinition with VLAN
@@ -202,26 +78,23 @@ spec:
     "type": "ovn-k8s-cni-overlay",
     "topology": "localnet",
     "netAttachDefName": "vm-guests-vlan/localnet-vlan-100",
-    "physicalNetworkName": "localnet-vlan",
-    "vlanID": 100
+    "vlanID": 100,
+    "subnets": "192.168.100.0/24",
+    "excludeSubnets": "192.168.100.1/32"
   }'
 EOF
 ```
 
 **Configuration Details**:
-- `physicalNetworkName: "localnet-vlan"`: **CRITICAL** - Must match the logical network name on the bridge mapping
 - `vlanID: 100`: Specifies VLAN tag 100 for network segmentation
+- `subnets`: Defines the expected IP subnet range for documentation and validation purposes
+- `excludeSubnets`: Excludes gateway IP from being assigned (typically reserved for router/gateway)
 - `topology: "localnet"`: Uses localnet topology for direct physical network access
-- **No IP management parameters**: Localnet topology with NAD does not support built-in IP address management. IP configuration must be handled entirely within the VM using cloud-init static configuration or external DHCP server on the VLAN network
-
-**Important Notes**:
-- The `physicalNetworkName` must match the `localnet` name configured in your bridge mapping
-- **IP Address Assignment**: With localnet topology, configure static IPs via cloud-init's `networkData` or rely on an external DHCP server running on the physical VLAN network
-- OVN-Kubernetes does not provide IP address management for localnet secondary networks attached via NAD
+- **No IPAM configuration**: IP addresses require external DHCP server on the VLAN network or VMs need to be configured statically
 
 ## Step 4: Deploy VM with VLAN Network Connectivity
 
-Here is a VM example that connects to both the pod network and the VLAN-tagged localnet secondary network.
+Create a VM that connects to both the pod network and the VLAN-tagged localnet secondary network.
 
 ```bash
 oc apply -f - <<EOF
@@ -283,11 +156,6 @@ spec:
           name: fedora-vlan-volume
       - name: cloudinitdisk
         cloudInitNoCloud:
-          networkData: |
-            version: 2
-            ethernets:
-              enp2s0:
-                addresses: ["192.168.100.10/24"]
           userData: |
             #cloud-config
             user: fedora
@@ -297,26 +165,13 @@ spec:
             - python3
             - tcpdump
             - net-tools
-            write_files:
-            - path: /root/index.html
-              content: |
-                <h1>Welcome to OpenShift Virtualization VLAN Network!</h1>
-                <p>VLAN ID: 100</p>
-                <p>Static IP: 192.168.100.10/24</p>
-                <p>Gateway: 192.168.100.1</p>
-              permissions: '0644'
             runcmd:
-            - nohup python3 -m http.server 8080 --directory /root > /dev/null 2>&1 &
+            - echo "<h1>Welcome to OpenShift Virtualization VLAN Network!</h1>" > /root/index.html
+            - echo "<p>VLAN ID: 100</p>" >> /root/index.html
+            - echo "<p>Network: 192.168.100.0/24</p>" >> /root/index.html
+            - cd /root && nohup python3 -m http.server 8080 > /dev/null 2>&1 &
 EOF
 ```
-
-**Cloud-init Network Configuration Explained**:
-- **Primary network (enp1s0)**: Not configured in `networkData` - defaults to DHCP from OpenShift pod network
-- **enp2s0** (VLAN network/secondary): Configured with static IP `192.168.100.10/24`
-  - **Critical**: Must use the actual interface name (`enp2s0`). Yours may be different. Example: `eth0`, `eth1`
-  - Uses compact YAML array syntax: `addresses: ["192.168.100.10/24"]`
-  - Only the secondary interface needs explicit configuration in `networkData` for static IP assignment
-  - Primary interface automatically gets DHCP from the pod network without explicit configuration
 
 ## Step 5: Verify VLAN Network Connectivity
 
@@ -333,38 +188,28 @@ oc get vmi -n vm-guests-vlan
 virtctl console -n vm-guests-vlan fedora-vlan-vm
 ```
 
-Inside the VM console, verify the VLAN network configuration with static IP:
+Inside the VM console, verify the VLAN network configuration:
 
 ```bash
-# Check network interfaces - should see static IP on eth1 (VLAN interface)
+# Check network interfaces - primary (pod network) and secondary (VLAN network)
 ip addr show
 
-# Expected output:
-# eth0 (enp1s0): pod network with DHCP IP (e.g., 10.128.0.172)
-# eth1 (enp2s0): VLAN network with static IP 192.168.100.10
-
-# Check routes - only primary network has default route
+# Check routes - two default gateways (lower metric prioritized)
+# Primary network: metric 100, Secondary VLAN: metric 101
 ip route show
 
 # Expected output example:
 default via 10.128.0.1 dev enp1s0 proto dhcp src 10.128.0.172 metric 100 
-10.128.0.0/14 dev enp1s0 proto kernel scope link src 10.128.0.172 metric 100
-192.168.100.0/24 dev enp2s0 proto kernel scope link src 192.168.100.10
+default via 192.168.100.1 dev enp2s0 proto dhcp src 192.168.100.50 metric 101 
 
-# Verify static IP is configured on VLAN interface (replace enp2s0 with your actual interface name)
-ip addr show enp2s0 | grep 192.168.100.10
-
-# Test external connectivity (uses primary network metric 100)
-ping -c 3 8.8.8.8
+# Test external connectivity
+ping 8.8.8.8
 
 # Verify the web service is running
 curl localhost:8080
 
-# Test VLAN interface connectivity from another machine on the same VLAN
-# From another VM or physical machine: curl 192.168.100.10:8080
-
-# Test connectivity using specific interface (ping your default gateway)
-ping -I enp2s0 192.168.100.1
+# Test VLAN interface connectivity (replace <vlan-ip> with actual IP)
+curl <vlan-ip>:8080
 
 # Verify VLAN tagging (if tcpdump is available)
 # This will show VLAN-tagged traffic on the secondary interface
@@ -379,34 +224,13 @@ sudo tcpdump -i enp2s0 -nn vlan 100
    - Verify physical switch configuration supports VLAN tagging
    - Check bridge mapping configuration on worker nodes
    - Ensure VLAN ID matches network infrastructure
-   - Verify the physical NIC is connected and UP
-   - Check that the OVS bridge includes the physical interface as a port
 
 2. **IP Address Assignment Issues**:
    - Verify DHCP server is available on the VLAN network
-   - Make sure your cloud-init script is running properly
 
 3. **Network Connectivity Problems**:
    - Check that the physical network supports the configured VLAN
    - Test connectivity from physical network to VLAN subnet
-   - Verify the physical switch port is in trunk mode
-
-4. **Custom Bridge Creation Issues**:
-   - See the **[OVS Bridge Verification Troubleshooting Guide](../troubleshooting/ovs-bridge-verification.md)** for detailed troubleshooting
-   - Remember: OVS bridges won't show in `ip addr show` - use `ovs-vsctl list-br` instead
-   - Ensure the physical interface name is correct
-   - Verify NMState operator is running properly
-
-5. **Bridge Mapping Not Working**:
-   - Verify the bridge name in the mapping matches the created bridge
-   - Check OVN bridge mappings: `ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings`
-   - Ensure the localnet name in the mapping matches the NAD configuration
-
-6. **VM Pod Fails with "failed bridge mapping validation" Error**:
-   - **Symptom**: VM pod fails with error: `failed to find OVN bridge-mapping for network: "localnet-vlan-100"`
-   - **Cause**: Missing `physicalNetworkName` parameter in NetworkAttachmentDefinition
-   - **Solution**: Ensure NAD includes `"physicalNetworkName": "localnet-vlan"` that matches the bridge mapping logical name
-   - **Verification**: After updating NAD, recreate it with `oc delete` and `oc apply`
 
 ### Verification Commands
 
@@ -414,45 +238,19 @@ sudo tcpdump -i enp2s0 -nn vlan 100
 # Check NetworkAttachmentDefinition status
 oc get network-attachment-definitions -n vm-guests-vlan
 
-# Verify all NodeNetworkConfigurationPolicies
-oc get nncp
-
-# Check bridge creation status (if using custom bridge)
-oc get nncp br-vlan-creation -o yaml
-
 # Verify bridge mapping on worker nodes
 oc get nncp localnet-vlan-bridge-mapping -o yaml
-
-# Check physical interface status on worker node
-oc debug node/<worker-node-name> -- chroot /host ip link show ens224
-
-# Verify OVS bridge configuration
-oc debug node/<worker-node-name> -- chroot /host ovs-vsctl show
-
-# Check OVN bridge mappings
-oc debug node/<worker-node-name> -- chroot /host ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
-
-# List all ports on the custom bridge
-oc debug node/<worker-node-name> -- chroot /host ovs-vsctl list-ports br-vlan
 
 # Check VM network status
 oc get vmi -n vm-guests-vlan -o yaml | grep -A 10 networks
 
 # View OVN-Kubernetes logs for troubleshooting
 oc logs -n openshift-ovn-kubernetes -l app=ovnkube-node
-
-# Check NMState operator logs if bridge creation fails
-oc logs -n openshift-nmstate -l app=kubernetes-nmstate-operator
 ```
 
 ## References
 
-### Troubleshooting Guides
-- **[OVS Bridge Verification Troubleshooting Guide](../troubleshooting/ovs-bridge-verification.md)** - Comprehensive guide for verifying and troubleshooting OVS bridge creation
-
 ### OpenShift Documentation
 - [OpenShift - Understanding Multiple Networks](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/multiple_networks/understanding-multiple-networks)
 - [Localnet Topology Configuration for OCP Virtualization](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/virtualization/networking#virt-creating-secondary-localnet-udn_virt-connecting-vm-to-secondary-udn)
-- [NMState Operator - Managing Node Network Configuration](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/networking_operators/k8s-nmstate-about-the-k8s-nmstate-operator)
-- [OVS Bridge Configuration with NMState](https://nmstate.io/examples.html#interfaces-ovs-bridge)
 

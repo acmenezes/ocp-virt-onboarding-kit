@@ -503,6 +503,143 @@ oc debug node/<node-name> -- chroot /host ovs-vsctl list bridge
 oc debug node/<node-name> -- chroot /host ovs-ofctl dump-ports br-vlan
 ```
 
+## ClusterUserDefinedNetwork (CUDN) Verification
+
+When using ClusterUserDefinedNetwork instead of NetworkAttachmentDefinition, additional verification steps are needed.
+
+### Step 1: Verify CUDN Resource
+
+Check that the ClusterUserDefinedNetwork was created successfully:
+
+```bash
+# List all CUDNs
+oc get clusteruserdefinednetwork
+
+# Get detailed CUDN information
+oc get clusteruserdefinednetwork <cudn-name> -o yaml
+```
+
+**Expected Output:**
+```
+NAME                     AGE
+cudn-localnet-vlan-100   5m
+```
+
+### Step 2: Verify CUDN Configuration
+
+Check the CUDN spec to ensure proper configuration:
+
+```bash
+oc get clusteruserdefinednetwork cudn-localnet-vlan-100 -o yaml
+```
+
+**Key fields to verify:**
+```yaml
+spec:
+  namespaceSelector: 
+    matchExpressions: 
+    - key: kubernetes.io/metadata.name
+      operator: In 
+      values: ["vm-guests-vlan-prod", "vm-guests-vlan-dev"]
+  network:
+    topology: Localnet 
+    localnet:
+      role: Secondary 
+      physicalNetworkName: localnet-vlan  # Must match bridge mapping logical name
+      vlanID: 100
+      ipam:
+        mode: Disabled  # Or Static depending on your needs
+```
+
+### Step 3: Verify Auto-Created NetworkAttachmentDefinitions
+
+CUDNs automatically create NetworkAttachmentDefinitions in the selected namespaces:
+
+```bash
+# List NADs in all namespaces
+oc get network-attachment-definitions -A | grep <cudn-name>
+
+# Check specific namespace
+oc get network-attachment-definitions -n <namespace>
+```
+
+**Expected Output:**
+```
+NAMESPACE             NAME                     AGE
+vm-guests-vlan-dev    cudn-localnet-vlan-100   5m
+vm-guests-vlan-prod   cudn-localnet-vlan-100   5m
+```
+
+### Step 4: Verify physicalNetworkName Matches Bridge Mapping
+
+The `physicalNetworkName` in CUDN must match the logical network name in your bridge mapping:
+
+```bash
+# Get CUDN physicalNetworkName
+oc get clusteruserdefinednetwork <cudn-name> -o jsonpath='{.spec.network.localnet.physicalNetworkName}'
+
+# Get bridge mapping logical name
+oc get nncp <bridge-mapping-nncp> -o jsonpath='{.spec.desiredState.ovn.bridge-mappings[0].localnet}'
+
+# Verify they match in OVN
+oc debug node/<node-name> -- chroot /host ovs-vsctl get Open_vSwitch . external_ids:ovn-bridge-mappings
+```
+
+**All three should show the same name** (e.g., `localnet-vlan`).
+
+### Step 5: Verify Cross-Namespace Network Availability
+
+Test that VMs in different namespaces can both use the CUDN:
+
+```bash
+# Check VMs in first namespace
+oc get vmi -n vm-guests-vlan-prod -o jsonpath='{.items[*].status.interfaces[?(@.name=="cudn_vlan_network")].ipAddress}'
+
+# Check VMs in second namespace
+oc get vmi -n vm-guests-vlan-dev -o jsonpath='{.items[*].status.interfaces[?(@.name=="cudn_vlan_network")].ipAddress}'
+```
+
+Both should return IP addresses if VMs are connected to the CUDN network.
+
+### CUDN-Specific Common Issues
+
+1. **NADs Not Created in Selected Namespaces**:
+   - **Symptom**: CUDN exists but `oc get network-attachment-definitions -n <namespace>` shows nothing
+   - **Cause**: Namespace selector doesn't match namespace labels
+   - **Solution**: Verify namespace labels match the CUDN selector
+   ```bash
+   # Check namespace labels
+   oc get namespace <namespace-name> -o jsonpath='{.metadata.labels}'
+   
+   # Check CUDN selector
+   oc get clusteruserdefinednetwork <cudn-name> -o jsonpath='{.spec.namespaceSelector}'
+   ```
+
+2. **VM Fails with "failed bridge mapping validation"**:
+   - **Symptom**: VM pod fails even though CUDN exists
+   - **Cause**: `physicalNetworkName` in CUDN doesn't match bridge mapping logical name
+   - **Solution**: Ensure they match exactly (case-sensitive)
+   ```bash
+   # Compare the names
+   oc get clusteruserdefinednetwork <cudn-name> -o jsonpath='{.spec.network.localnet.physicalNetworkName}'
+   oc get nncp <bridge-mapping-nncp> -o jsonpath='{.spec.desiredState.ovn.bridge-mappings[0].localnet}'
+   ```
+
+3. **IPAM Mode Issues**:
+   - **Symptom**: VMs not getting expected IP addresses
+   - **Cause**: IPAM mode misconfigured or cloud-init not working
+   - **For Static IP via cloud-init**: Set `ipam.mode: Disabled` in CUDN
+   - **For OVN IPAM**: Set `ipam.mode: Static` with `staticIPAMConfig`
+   - **Verification**:
+   ```bash
+   # Check IPAM mode
+   oc get clusteruserdefinednetwork <cudn-name> -o jsonpath='{.spec.network.localnet.ipam.mode}'
+   
+   # Check cloud-init logs in VM
+   virtctl console -n <namespace> <vm-name>
+   # Inside VM: cat /var/log/cloud-init.log
+   ```
+
 ## Localnet VLAN Network Troubleshooting
 
 ### Common Issues
