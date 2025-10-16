@@ -47,9 +47,53 @@ metadata:
 EOF
 ```
 
-## Step 2: Configure Bridge Mapping
+## Step 2: Create Custom OVS Bridge on Extra NIC
 
-Configure the bridge mapping that connects the logical network interface name `localnet-vlan` to the `br-ex` bridge interface on worker nodes. This mapping tells OVN-Kubernetes which physical bridge interface handles localnet traffic with VLAN support, enabling VM access to VLAN-tagged external networks through the underlying physical network infrastructure.
+First, create a custom OVS bridge on an additional physical network interface (NIC) to isolate VLAN traffic from the primary cluster network.
+
+```bash
+oc apply -f - <<EOF
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: br-vlan-creation
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ''
+  desiredState:
+    interfaces:
+    - name: enp11s0f0np0  # Replace with your physical interface name
+      type: ethernet
+      state: up
+      ipv4:
+        enabled: false
+      ipv6:
+        enabled: false
+      description: "Physical interface for VLAN localnet"
+    - name: br-vlan
+      type: ovs-bridge
+      state: up
+      bridge:
+        port:
+        - name: enp11s0f0np0
+      description: "OVS bridge for VLAN traffic"
+EOF
+```
+
+**Note**: Replace `enp11s0f0np0` with the name of your extra physical interface. You can find available interfaces by running:
+```bash
+oc debug node/<node-name> -- ip link show
+```
+
+Verify the bridge creation:
+```bash
+oc get nncp br-vlan-creation
+# Expected output: STATUS: Available
+```
+
+## Step 3: Configure Bridge Mapping
+
+Configure the bridge mapping that connects the logical network interface name `localnet-vlan` to the `br-vlan` OVS bridge on worker nodes. This mapping tells OVN-Kubernetes which physical bridge interface handles localnet traffic with VLAN support.
 
 ```bash
 oc apply -f - <<EOF
@@ -64,12 +108,12 @@ spec:
     ovn:
       bridge-mappings:
       - localnet: localnet-vlan
-        bridge: br-ex
+        bridge: br-vlan
         state: present
 EOF
 ```
 
-## Step 3: Create ClusterUserDefinedNetwork with VLAN
+## Step 4: Create ClusterUserDefinedNetwork with VLAN
 
 Create a ClusterUserDefinedNetwork that configures localnet topology with VLAN tagging for secondary network connectivity across multiple namespaces.
 
@@ -98,12 +142,12 @@ EOF
 
 **Configuration Details**:
 - `vlanID: 100`: Specifies VLAN tag 100 for network segmentation
-- `physicalNetworkName`: References the logical network interface name from bridge mapping
+- `physicalNetworkName`: References the logical network interface name from bridge mapping (`localnet-vlan`)
 - `role: Secondary`: Defines this as a secondary network (VMs keep pod network as primary)
 - `namespaceSelector`: Defines which namespaces can use this network
-- **IPAM Disabled**: IP addresses require external DHCP server on the VLAN network or VMs need to be configured statically
+- **IPAM Disabled**: IP addresses must be configured via cloud-init (static) or external DHCP server
 
-## Step 4: Deploy VM with VLAN Network Connectivity
+## Step 5: Deploy VM with VLAN Network Connectivity and Static IP
 
 Create a VM in one of the configured namespaces that connects to both the pod network and the VLAN-tagged localnet secondary network.
 
@@ -167,6 +211,11 @@ spec:
           name: fedora-cudn-vlan-volume
       - name: cloudinitdisk
         cloudInitNoCloud:
+          networkData: |
+            version: 2
+            ethernets:
+              enp2s0:
+                addresses: ["192.168.100.10/24"]
           userData: |
             #cloud-config
             user: fedora
@@ -176,18 +225,23 @@ spec:
             - python3
             - tcpdump
             - net-tools
+            write_files:
+            - path: /root/index.html
+              content: |
+                <h1>Welcome to OpenShift Virtualization CUDN VLAN Network!</h1>
+                <p>VLAN ID: 100</p>
+                <p>Static IP: 192.168.100.10/24</p>
+                <p>Network: CUDN Localnet</p>
+                <p>Namespace: vm-guests-vlan-prod</p>
+              permissions: '0644'
             runcmd:
-            - echo "<h1>Welcome to OpenShift Virtualization CUDN VLAN Network!</h1>" > /root/index.html
-            - echo "<p>VLAN ID: 100</p>" >> /root/index.html
-            - echo "<p>Network: CUDN Localnet</p>" >> /root/index.html
-            - echo "<p>Namespace: vm-guests-vlan-prod</p>" >> /root/index.html
-            - cd /root && nohup python3 -m http.server 8080 > /dev/null 2>&1 &
+            - nohup python3 -m http.server 8080 --directory /root > /dev/null 2>&1 &
 EOF
 ```
 
-## Step 5: Deploy VM in Second Namespace
+## Step 6: Deploy VM in Second Namespace
 
-Demonstrate cross-namespace network availability by creating a VM in the second namespace using the same CUDN.
+Demonstrate cross-namespace network availability by creating a VM in the second namespace using the same CUDN with a different static IP.
 
 ```bash
 oc apply -f - <<EOF
@@ -249,6 +303,11 @@ spec:
           name: fedora-cudn-vlan-volume-dev
       - name: cloudinitdisk
         cloudInitNoCloud:
+          networkData: |
+            version: 2
+            ethernets:
+              enp2s0:
+                addresses: ["192.168.100.20/24"]
           userData: |
             #cloud-config
             user: fedora
@@ -258,16 +317,21 @@ spec:
             - python3
             - tcpdump
             - net-tools
+            write_files:
+            - path: /root/index.html
+              content: |
+                <h1>Welcome to OpenShift Virtualization CUDN VLAN Network!</h1>
+                <p>VLAN ID: 100</p>
+                <p>Static IP: 192.168.100.20/24</p>
+                <p>Network: CUDN Localnet</p>
+                <p>Namespace: vm-guests-vlan-dev</p>
+              permissions: '0644'
             runcmd:
-            - echo "<h1>Welcome to OpenShift Virtualization CUDN VLAN Network!</h1>" > /root/index.html
-            - echo "<p>VLAN ID: 100</p>" >> /root/index.html
-            - echo "<p>Network: CUDN Localnet</p>" >> /root/index.html
-            - echo "<p>Namespace: vm-guests-vlan-dev</p>" >> /root/index.html
-            - cd /root && nohup python3 -m http.server 8080 > /dev/null 2>&1 &
+            - nohup python3 -m http.server 8080 --directory /root > /dev/null 2>&1 &
 EOF
 ```
 
-## Step 6: Verify VLAN Network Connectivity
+## Step 7: Verify VLAN Network Connectivity
 
 Access the VM consoles to verify dual network connectivity with VLAN configuration across namespaces.
 
@@ -293,13 +357,11 @@ Inside each VM console, verify the VLAN network configuration:
 # Check network interfaces - primary (pod network) and secondary (VLAN network)
 ip addr show
 
-# Check routes - two default gateways (lower metric prioritized)
-# Primary network: metric 100, Secondary VLAN: metric 101
+# Check routes
 ip route show
 
-# Expected output example:
-default via 10.128.0.1 dev enp1s0 proto dhcp src 10.128.0.172 metric 100 
-default via 192.168.100.1 dev enp2s0 proto dhcp src 192.168.100.50 metric 101 
+# Expected output example (primary network via DHCP):
+default via 10.128.0.1 dev enp1s0 proto dhcp src 10.128.0.174 metric 100 
 
 # Test external connectivity
 ping 8.8.8.8
@@ -307,89 +369,39 @@ ping 8.8.8.8
 # Verify the web service is running
 curl localhost:8080
 
-# Test VLAN interface connectivity (replace <vlan-ip> with actual IP)
-curl <vlan-ip>:8080
+# Verify static IP assignment on VLAN interface
+ip addr show enp2s0
+# Expected: inet 192.168.100.10/24 (prod) or 192.168.100.20/24 (dev)
+
+# Test VLAN interface connectivity between VMs
+# From production VM (192.168.100.10) ping development VM:
+ping 192.168.100.20
 
 # Verify VLAN tagging (if tcpdump is available)
 # This will show VLAN-tagged traffic on the secondary interface
 sudo tcpdump -i enp2s0 -nn vlan 100
 ```
 
-## Step 7: Test Cross-Namespace Connectivity
+## Step 8: Test Cross-Namespace Connectivity
 
 Verify that VMs in different namespaces can communicate over the shared CUDN VLAN network:
 
 ```bash
-# From production VM, ping development VM (replace with actual VLAN IPs)
-ping <dev-vm-vlan-ip>
+# From production VM (192.168.100.10), test connectivity to development VM
+ping 192.168.100.20
 
 # Test web service connectivity between namespaces
-curl <dev-vm-vlan-ip>:8080
+curl 192.168.100.20:8080
+
+# From development VM (192.168.100.20), test connectivity to production VM
+ping 192.168.100.10
+curl 192.168.100.10:8080
 ```
 
-## Advanced CUDN VLAN Configuration
-
-### Multiple VLAN Networks
-
-Create additional CUDNs for different VLANs:
-
-```bash
-# VLAN 200 for production traffic
-oc apply -f - <<EOF
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: cudn-localnet-vlan-200
-spec:
-  namespaceSelector: 
-    matchExpressions: 
-    - key: kubernetes.io/metadata.name
-      operator: In 
-      values: ["vm-guests-vlan-prod"]
-  network:
-    topology: Localnet 
-    localnet:
-      role: Secondary 
-      physicalNetworkName: localnet-vlan
-      vlanID: 200
-      ipam:
-        mode: Disabled
-EOF
-```
-
-### Static IP Configuration
-
-For static IP assignment within the VLAN network:
-
-```bash
-oc apply -f - <<EOF
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: cudn-localnet-vlan-static
-spec:
-  namespaceSelector: 
-    matchExpressions: 
-    - key: kubernetes.io/metadata.name
-      operator: In 
-      values: ["vm-guests-vlan-prod"]
-  network:
-    topology: Localnet 
-    localnet:
-      role: Secondary 
-      physicalNetworkName: localnet-vlan
-      vlanID: 300
-      ipam:
-        mode: Static
-        staticIPAMConfig:
-          addresses:
-          - "192.168.300.0/24"
-          excludeAddresses:
-          - "192.168.300.1/32"
-EOF
-```
 
 ## Troubleshooting
+
+For comprehensive OVS bridge and bridge mapping troubleshooting, including CUDN-specific verification steps, see the [OVS Bridge Verification Troubleshooting Guide](../troubleshooting/ovs-bridge-verification.md#clusteruserdefinednetwork-cudn-verification).
 
 ### Common Issues
 
@@ -397,23 +409,34 @@ EOF
    - Verify physical switch configuration supports VLAN tagging
    - Check bridge mapping configuration on worker nodes
    - Ensure VLAN ID matches network infrastructure
+   - Verify custom OVS bridge (`br-vlan`) is created: `oc get nncp br-vlan-creation`
+   - Confirm physical interface is attached to bridge
 
 2. **IP Address Assignment Issues**:
-   - Verify DHCP server is available on the VLAN network
+   - Verify static IP is configured correctly in cloud-init networkData
+   - Check that the interface name matches (enp2s0 for second interface)
+   - Verify cloud-init logs inside the VM: `cat /var/log/cloud-init.log`
 
 3. **Network Connectivity Problems**:
    - Check that the physical network supports the configured VLAN
    - Test connectivity from physical network to VLAN subnet
+   - Verify physical switch port is in trunk mode
 
 4. **Cross-Namespace Issues**:
    - Verify namespace selector in CUDN configuration
    - Check that both namespaces are listed in the values array
+   - Confirm NADs are auto-created in target namespaces
+
+5. **CUDN-Specific Issues**:
+   - Verify `physicalNetworkName` in CUDN matches bridge mapping logical name (`localnet-vlan`)
+   - Check CUDN created NADs in selected namespaces: `oc get network-attachment-definitions -A | grep cudn-localnet-vlan-100`
+   - Verify IPAM mode is set correctly (`Disabled` for static IPs via cloud-init)
 
 ### Verification Commands
 
 ```bash
 # Check ClusterUserDefinedNetwork status
-oc get clusteuserdefinednetwork
+oc get clusteruserdefinednetwork
 
 # Verify bridge mapping on worker nodes
 oc get nncp cudn-localnet-vlan-bridge-mapping -o yaml
