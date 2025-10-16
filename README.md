@@ -29,8 +29,8 @@ A bite-size approach reference project for deploying virtualization workloads fo
 
 - [Setting a Primary User Defined Network for your VMs](docs/tutorials/layer2-primary-network-udn-configuration.md)
 - Configuring secondary networks with layer 2 topology
-- [Setting up your VMs on the same network as your nodes \(localnet\)](docs/tutorials/localnet-secondary-network-configuration.md)
-- Setting up your VMs on VLANs (localnet)
+- [Setting up your VMs on the same network as your nodes using localnet topology](docs/tutorials/localnet-secondary-network-configuration.md)
+- [Setting up your VMs on VLANs using localnet topology](docs/tutorials/localnet-vlan-network-configuration.md)
 - [Setting up your VMs on VLANs, external or layer2-only networks \(Linux Bridges\)](docs/tutorials/linux-bridge-secondary-network-configuration.md)
 - Setting VMs on Hardware Accelerated networks (SR-IOv)
 - Configuring IP addresses through cloud-init

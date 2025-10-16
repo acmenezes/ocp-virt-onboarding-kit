@@ -41,7 +41,7 @@ EOF
 
 ## Step 2: Configure Bridge on Extra NIC (Optional)
 
-This step shows how to create an OVS bridge on a dedicated physical NIC for localnet traffic. Skip to **Step 2A** if you want to use the default `br-ex` bridge instead.
+This step shows how to create an OVS bridge on a dedicated physical NIC for localnet traffic. Skip to **Option B** if you want to use the default `br-ex` bridge instead.
 
 ### Option A: Create Custom OVS Bridge on Extra NIC
 
@@ -121,13 +121,7 @@ Bridge br-vlan
 
 If you encounter any issues verifying the bridge, see the **[OVS Bridge Verification Troubleshooting Guide](../troubleshooting/ovs-bridge-verification.md)** for detailed troubleshooting steps with example outputs.
 
-### Option B: Use Default br-ex Bridge
-
-If you want to use the existing `br-ex` bridge (default OpenShift network), skip the bridge creation and proceed directly to Step 2A.
-
-## Step 2A: Configure Bridge Mapping
-
-Configure the bridge mapping that connects the logical network interface name `localnet-vlan` to your OVS bridge. This mapping tells OVN-Kubernetes which physical bridge interface handles localnet traffic with VLAN support.
+**Configure Bridge Mapping**
 
 **For custom bridge (br-vlan):**
 ```bash
@@ -147,6 +141,15 @@ spec:
         state: present
 EOF
 ```
+
+**Configuration Details**:
+- `localnet: localnet-vlan`: Logical network interface name (referenced later in NAD)
+- `bridge: br-vlan` : Physical bridge name
+- This creates the mapping: `localnet-vlan` → `br-vlan`
+
+### Option B: Use Default br-ex Bridge
+
+If you want to use the existing `br-ex` bridge (default OpenShift network) configure the bridge mapping that connects the logical network interface name `localnet-vlan` to your OVS bridge like below. This mapping tells OVN-Kubernetes which physical bridge interface handles localnet traffic with VLAN support. In this case the default br-ex.
 
 **For default bridge (br-ex):**
 ```bash
@@ -169,8 +172,8 @@ EOF
 
 **Configuration Details**:
 - `localnet: localnet-vlan`: Logical network interface name (referenced later in NAD)
-- `bridge: br-vlan` or `bridge: br-ex`: Physical bridge name
-- This creates the mapping: `localnet-vlan` → `br-vlan` (or `br-ex`)
+- `bridge: `bridge: br-ex`: Physical bridge name
+- This creates the mapping: `localnet-vlan` → `br-ex`
 
 **Verify the bridge mapping:**
 ```bash
@@ -206,19 +209,19 @@ EOF
 ```
 
 **Configuration Details**:
-- `physicalNetworkName: "localnet-vlan"`: **CRITICAL** - Must match the logical network name from Step 2A bridge mapping
+- `physicalNetworkName: "localnet-vlan"`: **CRITICAL** - Must match the logical network name on the bridge mapping
 - `vlanID: 100`: Specifies VLAN tag 100 for network segmentation
 - `topology: "localnet"`: Uses localnet topology for direct physical network access
 - **No IP management parameters**: Localnet topology with NAD does not support built-in IP address management. IP configuration must be handled entirely within the VM using cloud-init static configuration or external DHCP server on the VLAN network
 
 **Important Notes**:
-- The `physicalNetworkName` must match the `localnet` name configured in your bridge mapping (Step 2A)
+- The `physicalNetworkName` must match the `localnet` name configured in your bridge mapping
 - **IP Address Assignment**: With localnet topology, configure static IPs via cloud-init's `networkData` or rely on an external DHCP server running on the physical VLAN network
 - OVN-Kubernetes does not provide IP address management for localnet secondary networks attached via NAD
 
 ## Step 4: Deploy VM with VLAN Network Connectivity
 
-Create a VM that connects to both the pod network and the VLAN-tagged localnet secondary network.
+Here is a VM example that connects to both the pod network and the VLAN-tagged localnet secondary network.
 
 ```bash
 oc apply -f - <<EOF
@@ -310,12 +313,10 @@ EOF
 **Cloud-init Network Configuration Explained**:
 - **Primary network (enp1s0)**: Not configured in `networkData` - defaults to DHCP from OpenShift pod network
 - **enp2s0** (VLAN network/secondary): Configured with static IP `192.168.100.10/24`
-  - **Critical**: Must use the actual interface name (`enp2s0`) not generic names like `eth0`, `eth1`
+  - **Critical**: Must use the actual interface name (`enp2s0`). Yours may be different. Example: `eth0`, `eth1`
   - Uses compact YAML array syntax: `addresses: ["192.168.100.10/24"]`
   - Only the secondary interface needs explicit configuration in `networkData` for static IP assignment
   - Primary interface automatically gets DHCP from the pod network without explicit configuration
-
-**Note**: KubeVirt VMs use predictable network interface names (e.g., `enp1s0`, `enp2s0`) based on PCI slot positions, not traditional `eth0`/`eth1` names. Always verify interface names match your VM's actual configuration.
 
 ## Step 5: Verify VLAN Network Connectivity
 
@@ -350,7 +351,7 @@ default via 10.128.0.1 dev enp1s0 proto dhcp src 10.128.0.172 metric 100
 10.128.0.0/14 dev enp1s0 proto kernel scope link src 10.128.0.172 metric 100
 192.168.100.0/24 dev enp2s0 proto kernel scope link src 192.168.100.10
 
-# Verify static IP is configured on VLAN interface
+# Verify static IP is configured on VLAN interface (replace enp2s0 with your actual interface name)
 ip addr show enp2s0 | grep 192.168.100.10
 
 # Test external connectivity (uses primary network metric 100)
@@ -362,7 +363,7 @@ curl localhost:8080
 # Test VLAN interface connectivity from another machine on the same VLAN
 # From another VM or physical machine: curl 192.168.100.10:8080
 
-# Test connectivity using specific interface
+# Test connectivity using specific interface (ping your default gateway)
 ping -I enp2s0 192.168.100.1
 
 # Verify VLAN tagging (if tcpdump is available)
@@ -383,6 +384,7 @@ sudo tcpdump -i enp2s0 -nn vlan 100
 
 2. **IP Address Assignment Issues**:
    - Verify DHCP server is available on the VLAN network
+   - Make sure your cloud-init script is running properly
 
 3. **Network Connectivity Problems**:
    - Check that the physical network supports the configured VLAN
@@ -403,7 +405,7 @@ sudo tcpdump -i enp2s0 -nn vlan 100
 6. **VM Pod Fails with "failed bridge mapping validation" Error**:
    - **Symptom**: VM pod fails with error: `failed to find OVN bridge-mapping for network: "localnet-vlan-100"`
    - **Cause**: Missing `physicalNetworkName` parameter in NetworkAttachmentDefinition
-   - **Solution**: Ensure NAD includes `"physicalNetworkName": "localnet-vlan"` that matches the bridge mapping logical name from Step 2A
+   - **Solution**: Ensure NAD includes `"physicalNetworkName": "localnet-vlan"` that matches the bridge mapping logical name
    - **Verification**: After updating NAD, recreate it with `oc delete` and `oc apply`
 
 ### Verification Commands

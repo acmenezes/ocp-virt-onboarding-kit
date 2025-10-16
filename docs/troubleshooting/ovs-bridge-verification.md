@@ -8,7 +8,7 @@ This guide helps you verify that OVS (Open vSwitch) bridges are correctly create
 
 - **OVS bridges** are visible using `ovs-vsctl` commands
 - **OVS bridges** may NOT appear as regular network interfaces in `ip addr show` or `ip link show`
-- ℹ️ This is **normal and expected behavior** - OVS bridges exist in the OVS database, not as standard Linux network devices
+- This is **normal and expected behavior** - OVS bridges exist in the OVS database, not as standard Linux network devices
 
 ## Verification Process
 
@@ -81,7 +81,7 @@ br-vlan
 Removing debug pod ...
 ```
 
-✅ If you see `br-vlan` in this list, your bridge was created successfully!
+If you see `br-vlan` in this list, your bridge was created successfully!
 
 ### Step 4: Verify Bridge Configuration Details
 
@@ -297,8 +297,8 @@ oc debug node/<node-name> -- chroot /host ovs-vsctl get Open_vSwitch . external_
 ```
 
 **What this means:**
-- `localnet-vlan:br-vlan` = Your custom mapping ✅
-- `physnet:br-ex` = Default OpenShift mapping ✅
+- `localnet-vlan:br-vlan` = Your custom mapping
+- `physnet:br-ex` = Default OpenShift mapping
 - Multiple mappings are comma-separated
 
 ### Step 4: Verify Complete OVS External IDs
@@ -315,9 +315,9 @@ external_ids        : {hostname=ocplab01, ovn-bridge-mappings="localnet-vlan:br-
 ```
 
 **Verify:**
-- ✅ `ovn-bridge-mappings` includes your mapping
-- ✅ `hostname` matches your node
-- ✅ `ovn-encap-type=geneve` is present
+- `ovn-bridge-mappings` includes your mapping
+- `hostname` matches your node
+- `ovn-encap-type=geneve` is present
 
 ### Step 5: Verify Physical Interface is Attached
 
