@@ -33,7 +33,7 @@ A bite-size approach reference project for deploying virtualization workloads fo
 - [Setting up your VMs on VLANs using localnet topology](docs/tutorials/localnet-vlan-network-configuration.md)
 - [Setting up your VMs on VLANs, external or layer2-only networks \(Linux Bridges\)](docs/tutorials/linux-bridge-secondary-network-configuration.md)
 - Setting VMs on Hardware Accelerated networks (SR-IOv)
-- Configuring IP addresses through cloud-init
+- [Configuring IP Addresses with Cloud-init](docs/tutorials/cloud-init-ip-configuration.md)
 
 #### Configuring storage for OCP virtualization
 
