@@ -16,6 +16,7 @@ A bite-size approach reference project for deploying virtualization workloads fo
 
 - Setting UP Local Environment and Tools for OCP virtualization
 - [Virtctl basics](docs/tutorials/virtctl-basic-overview.md)
+- [Remote Access to Linux VMs](docs/tutorials/remote-access-linux-vms.md)
 
 #### Working with files, images and templates
 
