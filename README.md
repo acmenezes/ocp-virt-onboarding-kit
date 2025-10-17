@@ -20,7 +20,7 @@ A bite-size approach reference project for deploying virtualization workloads fo
 #### Working with files, images and templates
 
 - Transferring files to and from VMs
-- Creating and Using your own custom VM images
+- [Creating and Using Custom OS Images and Golden Images](docs/tutorials/creating-custom-golden-images.md)
 - Shrinking large images
 - Converting images to qcow2 format
 - Creating your own custom template on OCP Virtualization
