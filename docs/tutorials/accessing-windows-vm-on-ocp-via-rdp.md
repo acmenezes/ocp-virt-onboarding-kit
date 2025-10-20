@@ -1,0 +1,198 @@
+# Accessing Your Windows 11 VM on Red Hat OpenShift via Remote Desktop
+
+## Summary
+
+This tutorial guides you through configuring external Remote Desktop Protocol (RDP) access to your Windows 11 virtual machine running on OpenShift. After completing this guide, you'll be able to connect directly to your VM using Windows Remote Desktop, providing a more seamless and feature-rich experience than the VNC console.
+
+## What problem does this solve?
+
+Users who need to access Windows VMs hosted on Red Hat OpenShift Virtualization via Microsoft Remote Desktop.
+
+---
+
+## Network Topology
+
+### Understanding Network Architecture
+
+The IP address discrepancy you observe is expected behavior:
+
+- **10.0.2.2**: VM's internal network interface IP within the Windows OS
+- **10.128.1.132**: Internal pod IP within the OpenShift cluster
+- **Neither is externally routable** - requires service exposure
+
+---
+
+## Prerequisites
+
+- [ ] Windows 11 VM successfully deployed on OpenShift
+- [ ] Access to OpenShift web console or `oc` CLI
+- [ ] VM accessible via VNC console
+- [ ] Administrative access to the Windows 11 VM
+- [ ] Local Windows machine with Remote Desktop Connection client
+
+---
+
+## Tutorial Steps
+
+### Step-by-Step Configuration
+
+#### Step 1: Enable Remote Desktop in Windows 11
+
+1. **Access VM Console**
+   - Log into your Windows 11 VM using the OpenShift VNC console
+
+2. **Open System Settings**
+   - Right-click the **Start Menu**
+   - Select **System**
+
+3. **Configure Remote Desktop**
+   - Navigate to **Remote Desktop** in the left menu
+   - Toggle **Remote Desktop** to **On**
+   - Click **Confirm** when prompted
+   - **Note the PC name** displayed for later use
+
+---
+
+#### Step 2: Expose VM to External Network
+
+You need to create a service exposing RDP port 3389. Choose your preferred method:
+
+##### Option A: OpenShift Web Console (Recommended)
+
+1. **Navigate to Services**
+   ```
+   OpenShift Console → Your Project → Networking → Services
+   ```
+
+2. **Create New Service**
+   - Click **Create Service**
+   - Configure the following:
+
+   | Field | Value | Description |
+   |-------|-------|-------------|
+   | **Service Type** | `LoadBalancer` | Provides dedicated external IP |
+   | **Service Name** | `win11-rdp-service` | Descriptive service name |
+   | **Selector** | `vm.kubevirt.io/name: <your-vm-name>` | **Critical**: Replace with actual VM name |
+   | **Port** | `3389` | Service exposed port |
+   | **Target Port** | `3389` | RDP port on Windows VM |
+   | **Protocol** | `TCP` | Required for RDP |
+
+   > **Note**: If LoadBalancer is unavailable, use `NodePort` (assigns port 30000-32767)
+
+3. **Create the Service**
+   - Click **Create**
+   - Note the assigned port if using NodePort
+
+##### Option B: Command Line Interface
+
+1. **Create Service Definition**
+   
+   Create `rdp-service.yaml`:
+   
+   ```yaml
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: win11-rdp-service
+   spec:
+     selector:
+       vm.kubevirt.io/name: your-vm-name  # REPLACE with your VM's actual name
+     ports:
+       - protocol: TCP
+         port: 3389
+         targetPort: 3389
+     type: LoadBalancer  # or NodePort
+   ```
+
+2. **Apply Configuration**
+   
+   ```bash
+   oc apply -f rdp-service.yaml
+   ```
+
+---
+
+#### Step 3: Obtain Connection Details
+
+##### For LoadBalancer Service:
+
+1. Navigate to **Networking → Services**
+2. Locate `win11-rdp-service`
+3. Record the **External IP** address
+
+##### For NodePort Service:
+
+1. Find your service and note the assigned **NodePort** (e.g., `31234`)
+2. Get worker node external IP:
+   
+   ```bash
+   oc get nodes -o wide
+   ```
+   
+   Look for **EXTERNAL-IP** column
+
+---
+
+#### Step 4: Connect via Remote Desktop
+
+1. **Open Remote Desktop Connection**
+   - Search for "Remote Desktop Connection" on your local Windows machine
+
+2. **Enter Connection Information**
+
+   | Service Type | Computer Field Format | Example |
+   |--------------|----------------------|---------|
+   | **LoadBalancer** | `<External-IP>` | `203.0.113.5` |
+   | **NodePort** | `<Node-External-IP>:<NodePort>` | `203.0.113.10:31234` |
+
+3. **Initiate Connection**
+   - Click **Connect**
+   - Enter your Windows 11 VM credentials when prompted
+
+---
+
+## Security Considerations
+
+⚠️ **Important Security Notes:**
+
+- Exposing RDP to the internet creates security risks
+- Consider using VPN or bastion hosts for production environments
+- Enable Network Level Authentication in Windows if possible
+- Use strong passwords and consider certificate-based authentication
+- Monitor access logs regularly
+
+---
+
+## Verification & Troubleshooting
+
+### Connection Success Indicators
+
+- [ ] Remote Desktop client connects without timeout
+- [ ] Windows 11 desktop appears with full functionality
+- [ ] Mouse and keyboard input responsive
+- [ ] Audio/clipboard redirection works (if configured)
+
+### Common Issues & Solutions
+
+| Issue | Possible Cause | Solution |
+|-------|----------------|----------|
+| **Connection timeout** | Service not created properly | Verify service exists and has external IP |
+| **Connection refused** | RDP not enabled in Windows | Re-enable Remote Desktop in Windows settings |
+| **Wrong credentials** | Incorrect VM login details | Verify username/password via VNC console |
+| **Service has no external IP** | LoadBalancer not available | Switch to NodePort service type |
+
+---
+
+## Additional Resources
+
+- [OpenShift Virtualization Documentation](https://docs.openshift.com/container-platform/latest/virt/about-virt.html)
+- [KubeVirt User Guide](https://kubevirt.io/user-guide/)
+- [Windows Remote Desktop Best Practices](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/)
+
+---
+
+## Tags
+
+`openshift`, `virtualization`, `windows11`, `rdp`, `kubernetes`, `kubevirt`
+
+---
