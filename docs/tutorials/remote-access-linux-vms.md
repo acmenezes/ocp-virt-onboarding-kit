@@ -4,16 +4,16 @@
 
 This tutorial demonstrates various methods to access Linux virtual machines running on OpenShift Virtualization. Each method suits different use cases, from quick troubleshooting to production-grade access patterns.
 
-## Access Methods Comparison
+## Access Methods and Use Cases
 
-| Method | Use Case | Network Required | SSH Keys Required | Production Ready |
-|--------|----------|------------------|-------------------|------------------|
-| Console | Initial setup, troubleshooting | No | No | No |
-| VNC | GUI access | No | No | No |
-| virtctl SSH | Quick admin access | Yes | Yes | No |
-| NodePort Service | External access | Yes | Yes | Limited |
-| Port Forward | Development, testing | Yes | Yes | No |
-| Secondary Network | Traditional infrastructure | Yes | Yes | Yes |
+| Method | Use Case | SSH Keys Required |
+|--------|----------|-------------------|
+| Console | Initial setup, troubleshooting | No |
+| VNC | GUI access | No |
+| virtctl SSH | Quick admin access | Yes |
+| NodePort Service | External access | Yes |
+| Port Forward | Development, testing | Yes |
+| Secondary Network | Traditional infrastructure | Yes |
 
 ## Prerequisites
 
@@ -203,7 +203,6 @@ Output should show guest OS information if agent is running.
 
 - Requires cluster access
 - Depends on guest agent
-- Not suitable for production external access
 
 ## Method 4: Direct SSH via NodePort Service
 
@@ -558,37 +557,9 @@ For detailed troubleshooting, see the [VM Remote Access Troubleshooting Guide](.
 - Document who has access to what VMs
 - Regular access audits
 
-## When to Use Each Method
+## Troubleshooting
 
-### Console/VNC
-- Initial setup
-- Troubleshooting
-- GUI applications
-- Emergency access
-
-### virtctl SSH
-- Quick admin tasks
-- Development work
-- Testing
-- When you have cluster access
-
-### NodePort
-- Testing external access
-- Dev/test environments
-- Quick external access setup
-- Non-production workloads
-
-### Port-Forward
-- Temporary debugging
-- One-off access
-- Development testing
-- When other methods unavailable
-
-### Secondary Network
-- Production environments
-- Traditional infrastructure
-- Multiple VMs needing access
-- Integration with existing networks
+For detailed troubleshooting steps, verification commands, and solutions for each access method, see the [VM Remote Access Troubleshooting Guide](../troubleshooting/vm-remote-access-troubleshooting.md).
 
 ## Cleanup
 
@@ -619,8 +590,4 @@ In this tutorial, you learned:
 
 ## References
 
-- [OpenShift Virtualization Documentation](https://docs.openshift.com/container-platform/latest/virt/about_virt/about-virt.html)
-- [virtctl Documentation](https://kubevirt.io/user-guide/operations/virtctl_client_tool/)
-- [KubeVirt User Guide](https://kubevirt.io/user-guide/)
-- [SSH Best Practices](https://www.ssh.com/academy/ssh/best-practices)
-
+- [Managing VMs](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/virtualization/managing-vms)
